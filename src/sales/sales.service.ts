@@ -54,29 +54,18 @@ export class SalesService {
             const response = await firstValueFrom(
                 this.httpService.get<ProductResponse>(url, {
                     timeout: 10000,
-                    validateStatus: (status) => status < 500
+                    validateStatus: (status) => status >= 200 && status < 400,
                 }),
             );
             return response.data;
         } catch (error) {
             this.logger.error(`Error fetching product ${id}:`, {
                 url: `${this.productsUrl}/products/${id}`,
-                error: error.code || error.message,
-                stack: error.stack
+                status: error.response?.status,
+                data: error.response?.data,
+                message: error.message,
             });
-
-            try {
-                const altUrl = `http://products-micro:3001/products-micro/products/${id}`;
-                this.logger.log(`Trying alternative URL: ${altUrl}`);
-
-                const response = await firstValueFrom(
-                    this.httpService.get<ProductResponse>(altUrl)
-                );
-                return response.data;
-            } catch (altError) {
-                this.logger.error(`Alternative URL also failed:`, altError.message);
-                throw new InternalServerErrorException(`Failed to fetch product ${id}`);
-            }
+            throw new InternalServerErrorException(`Failed to fetch product ${id}`);
         }
     }
 

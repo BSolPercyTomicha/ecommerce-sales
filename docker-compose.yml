@@ -112,7 +112,7 @@ services:
       - "3002:3000"
     environment:
       CUSTOMERS_BASE_URL: http://customers-micro:9000/api
-      PRODUCTS_BASE_URL: http://products-micro:3001/products-micro
+      PRODUCTS_BASE_URL: http://products-micro:3000/products-micro
       DATABASE_URL: postgres://postgres:postgres@postgres-sales:5432/ms_sales_db
       PORT: 3000
     depends_on:
