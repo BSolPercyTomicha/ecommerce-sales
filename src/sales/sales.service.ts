@@ -1,115 +1,152 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CreateSaleRequestDto } from './dto/create-sale.dto';
 import {
     SaleResponse,
     CustomerResponse,
+    ProductResponse,
     SaleProductResponse,
-    ProductResponse
 } from './interfaces/sale-response.interface';
+import { Sale } from './entities/sale.entity';
+import { SaleProduct } from './entities/sale-product.entity';
 
 @Injectable()
 export class SalesService {
-    private generateUUID(): string {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-            const r = Math.random() * 16 | 0;
-            const v = c == 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
+    private readonly logger = new Logger(SalesService.name);
+    private readonly customersUrl: string;
+    private readonly productsUrl: string;
+
+    constructor(
+        private readonly httpService: HttpService,
+        @InjectRepository(Sale) private readonly saleRepo: Repository<Sale>,
+        @InjectRepository(SaleProduct) private readonly saleProductRepo: Repository<SaleProduct>,
+    ) {
+        this.customersUrl = process.env.CUSTOMERS_BASE_URL || 'http://customers-micro:9000/api';
+        this.productsUrl = process.env.PRODUCTS_BASE_URL || 'http://products-micro:3001/products-micro';
+
+        this.logger.log(`Customers URL: ${this.customersUrl}`);
+        this.logger.log(`Products URL: ${this.productsUrl}`);
+    }
+
+    private async getCustomerById(id: string): Promise<CustomerResponse> {
+        try {
+            const url = `${this.customersUrl}/customers/${id}`;
+            this.logger.log(`Fetching customer from: ${url}`);
+
+            const response = await firstValueFrom(
+                this.httpService.get<CustomerResponse>(url),
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Error fetching customer ${id}:`, error.response?.data || error.message);
+            throw new InternalServerErrorException(`Failed to fetch customer ${id}`);
+        }
+    }
+
+    private async getProductById(id: string): Promise<ProductResponse> {
+        try {
+            const url = `${this.productsUrl}/products/${id}`;
+            this.logger.log(`Fetching product from: ${url}`);
+
+            const response = await firstValueFrom(
+                this.httpService.get<ProductResponse>(url, {
+                    timeout: 10000,
+                    validateStatus: (status) => status < 500
+                }),
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Error fetching product ${id}:`, {
+                url: `${this.productsUrl}/products/${id}`,
+                error: error.code || error.message,
+                stack: error.stack
+            });
+
+            try {
+                const altUrl = `http://products-micro:3001/products-micro/products/${id}`;
+                this.logger.log(`Trying alternative URL: ${altUrl}`);
+
+                const response = await firstValueFrom(
+                    this.httpService.get<ProductResponse>(altUrl)
+                );
+                return response.data;
+            } catch (altError) {
+                this.logger.error(`Alternative URL also failed:`, altError.message);
+                throw new InternalServerErrorException(`Failed to fetch product ${id}`);
+            }
+        }
+    }
+
+    async getSales(): Promise<SaleResponse[]> {
+        const sales = await this.saleRepo.find({ relations: ['saleProducts'] });
+        const enrichedSales: SaleResponse[] = [];
+
+        for (const sale of sales) {
+            try {
+                const customer = await this.getCustomerById(sale.customerId);
+                const saleProducts: SaleProductResponse[] = [];
+
+                for (const sp of sale.saleProducts) {
+                    const product = await this.getProductById(sp.productId);
+                    saleProducts.push({ ...sp, product, saleId: sale.id });
+                }
+
+                enrichedSales.push({
+                    ...sale,
+                    customer,
+                    saleProducts,
+                    billingName: sale.billingName,
+                    billingTaxId: sale.billingTaxId,
+                    totalAmount: sale.totalAmount,
+                });
+            } catch (error) {
+                this.logger.error(`Error enriching sale ${sale.id}:`, error.message);
+            }
+        }
+        return enrichedSales;
+    }
+
+    async createSale(createSaleDto: CreateSaleRequestDto): Promise<SaleResponse> {
+        const customer = await this.getCustomerById(createSaleDto.customerId);
+        let totalAmount = 0;
+        const sale = this.saleRepo.create({
+            customerId: createSaleDto.customerId,
+            billingName: createSaleDto.billingName || `${customer.firstName} ${customer.lastName}`,
+            billingTaxId: createSaleDto.billingTaxId || customer.identificationNumber,
+            totalAmount: 0,
         });
-    }
 
-    private createMockCustomer(): CustomerResponse {
-        return {
-            id: this.generateUUID(),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            identificationNumber: '1234567890',
-            firstName: 'John',
-            lastName: 'Doe',
-            email: 'john.doe@example.com',
-            phoneNumber: '1234567890',
-        };
-    }
+        await this.saleRepo.save(sale);
 
-    private createMockProduct(): ProductResponse {
-        return {
-            id: this.generateUUID(),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            name: 'Product 1',
-            description: 'Description 1',
-            price: 100,
-        };
-    }
+        const saleProducts: SaleProductResponse[] = [];
 
-    private createMockSaleProduct(): SaleProductResponse {
-        const product = this.createMockProduct();
-        return {
-            id: this.generateUUID(),
-            saleId: this.generateUUID(),
-            productId: product.id,
-            createdAt: new Date(),
-            unitPrice: 100,
-            quantity: 1,
-            totalAmount: 100,
-            product: product,
-        };
-    }
+        for (const item of createSaleDto.saleProducts) {
+            const product = await this.getProductById(item.productId);
+            const subtotal = product.price * item.quantity;
+            totalAmount += subtotal;
 
-    private createMockSale(): SaleResponse {
-        const customer = this.createMockCustomer();
-        return {
-            id: this.generateUUID(),
-            createdAt: new Date(),
-            customerId: customer.id,
-            billingName: 'John Doe',
-            billingTaxId: '1234567890',
-            totalAmount: 100,
-            customer: customer,
-            saleProducts: [this.createMockSaleProduct()],
-        };
-    }
+            const sp = this.saleProductRepo.create({
+                sale,
+                productId: item.productId,
+                unitPrice: product.price,
+                quantity: item.quantity,
+                totalAmount: subtotal,
+            });
+            await this.saleProductRepo.save(sp);
 
-    getSales(): SaleResponse[] {
-        // Retornar array con 2 ventas de ejemplo
-        return [
-            this.createMockSale(),
-            {
-                ...this.createMockSale(),
-                id: this.generateUUID(),
-                billingName: 'Jane Smith',
-                totalAmount: 200,
-                saleProducts: [
-                    {
-                        ...this.createMockSaleProduct(),
-                        id: this.generateUUID(),
-                        unitPrice: 200,
-                        totalAmount: 200,
-                        product: {
-                            ...this.createMockProduct(),
-                            name: 'Product 2',
-                            description: 'Description 2',
-                            price: 200,
-                        },
-                    },
-                ],
-            },
-        ];
-    }
+            saleProducts.push({ ...sp, product, saleId: sale.id });
+        }
 
-    createSale(createSaleDto: CreateSaleRequestDto): SaleResponse {
-        // Crear una venta mock usando los datos del request combinados con datos mock
-        const customer = this.createMockCustomer();
-        const saleProduct = this.createMockSaleProduct();
+        sale.totalAmount = totalAmount;
+        await this.saleRepo.save(sale);
 
         return {
-            id: this.generateUUID(),
-            createdAt: new Date(),
-            customerId: createSaleDto.customerId || customer.id,
-            billingName: createSaleDto.billingName || 'John Doe',
-            billingTaxId: createSaleDto.billingTaxId || '1234567890',
-            totalAmount: createSaleDto.totalAmount || 100,
-            customer: customer,
-            saleProducts: [saleProduct],
+            ...sale,
+            customer,
+            saleProducts,
         };
     }
 }

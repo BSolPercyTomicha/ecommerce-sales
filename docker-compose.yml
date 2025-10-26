@@ -1,0 +1,137 @@
+services:
+  # === MySQL para Customers ===
+  mysql:
+    image: mysql:8.4
+    container_name: mysql-customers
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ecommerce_customers
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # === Customers Microservice (Docker Hub) ===
+  customers-micro:
+    image: jmayser/ecommerce-customers:5.0.0
+    container_name: customers-micro
+    ports:
+      - "9000:9000"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ecommerce_customers?useSSL=false&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/customers || curl -f http://localhost:9000/ || nc -z localhost 9000"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+
+  # === PostgreSQL para Products ===
+  postgres-products:
+    image: postgres:14
+    container_name: postgres-products
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ms_products_db
+    ports:
+      - "5431:5432"
+    volumes:
+      - pg_products_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === Products Microservice (Docker Hub) ===
+  products-micro:
+    image: alexdl97/ms-products:01
+    container_name: products-micro
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres-products:5432/ms_products_db
+      HOST: 0.0.0.0
+      PORT: 3000
+    depends_on:
+      postgres-products:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || curl -f http://localhost:3000/products || nc -z localhost 3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+
+  # === PostgreSQL para Sales ===
+  postgres-sales:
+    image: postgres:14
+    container_name: postgres-sales
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ms_sales_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_sales_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === Sales Microservice (TU CÓDIGO) ===
+  sales-micro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales-micro
+    ports:
+      - "3002:3000"
+    environment:
+      CUSTOMERS_BASE_URL: http://customers-micro:9000/api
+      PRODUCTS_BASE_URL: http://products-micro:3001/products-micro
+      DATABASE_URL: postgres://postgres:postgres@postgres-sales:5432/ms_sales_db
+      PORT: 3000
+    depends_on:
+      postgres-sales:
+        condition: service_healthy
+      products-micro:
+        condition: service_healthy
+      customers-micro:
+        condition: service_healthy
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  mysql_data:
+  pg_products_data:
+  pg_sales_data:
+
+networks:
+  app-network:
+    driver: bridge

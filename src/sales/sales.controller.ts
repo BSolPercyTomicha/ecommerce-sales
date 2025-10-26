@@ -8,12 +8,12 @@ export class SalesController {
     constructor(private readonly salesService: SalesService) { }
 
     @Get()
-    getSales(): SaleResponse[] {
-        return this.salesService.getSales();
+    async getSales(): Promise<SaleResponse[]> {
+        return this.salesService.getSales(); // ← Con async/await
     }
 
     @Post()
-    createSale(@Body() createSaleDto: CreateSaleRequestDto): SaleResponse {
-        return this.salesService.createSale(createSaleDto);
+    async createSale(@Body() createSaleDto: CreateSaleRequestDto): Promise<SaleResponse> {
+        return this.salesService.createSale(createSaleDto); // ← Con async/await
     }
 }
