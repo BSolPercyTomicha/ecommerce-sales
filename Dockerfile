@@ -36,6 +36,7 @@ RUN npm install --omit=dev
 
 # Copia la aplicación compilada desde la etapa 'builder'
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/.env ./.env
 
 # Expone el puerto que usa NestJS (por defecto 3000)
 # Ajusta si tu aplicación usa otro puerto
