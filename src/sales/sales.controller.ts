@@ -9,11 +9,11 @@ export class SalesController {
 
     @Get()
     async getSales(): Promise<SaleResponse[]> {
-        return this.salesService.getSales(); // ← Con async/await
+        return this.salesService.getSales();
     }
 
     @Post()
     async createSale(@Body() createSaleDto: CreateSaleRequestDto): Promise<SaleResponse> {
-        return this.salesService.createSale(createSaleDto); // ← Con async/await
+        return this.salesService.createSale(createSaleDto);
     }
 }

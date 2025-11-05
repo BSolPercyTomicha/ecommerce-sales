@@ -9,7 +9,7 @@ import { SaleProduct } from './entities/sale-product.entity';
 @Module({
     imports: [
         TypeOrmModule.forFeature([Sale, SaleProduct]),
-        HttpModule,  // ← ¡AQUÍ!
+        HttpModule,
     ],
     controllers: [SalesController],
     providers: [SalesService],
